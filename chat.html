@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Chat with LLM</title>
+  <style>
+    .feedback {
+      display: none;
+      margin-left: 10px;
+      font-style: italic;
+      color: #555;
+    }
+    .clickable {
+      cursor: pointer;
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <h2>Chat</h2>
+
+  <div>
+    <label>Select Category:</label>
+    <ul id="categoryList"></ul>
+  </div>
+
+  <div style="margin-top: 10px;">
+    <label>Select Lesson:</label>
+    <select id="lessonSelect">
+      <option value="">-- Select a lesson --</option>
+    </select>
+  </div>
+
+
+  <br><br>
+  <div id="chat" style="border:1px solid #ccc; padding:10px; width:400px; height:300px; overflow-y:auto;"></div>
+  <input type="text" id="input" placeholder="Say something..." style="width:300px;" />
+  <button onclick="send()">Send</button>
+  <button onclick="score()">Finish Chat</button>
+
+  <script>
+    let history = [];
+
+    async function loadCategories() {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/categories");
+        const categories = await res.json();
+        const list = document.getElementById("categoryList");
+        list.innerHTML = "";
+
+        categories.forEach(category => {
+          const li = document.createElement("li");
+          li.textContent = category.name;
+          li.className = "clickable";
+          li.onclick = () => loadLessonsForCategory(category.id);
+          list.appendChild(li);
+        });
+      } catch (err) {
+        console.error("Failed to load categories:", err);
+      }
+    }
+
+    async function loadLessonsForCategory(categoryId) {
+      try {
+        const res = await fetch(`http://127.0.0.1:8000/lessons/by_category/${encodeURIComponent(categoryId)}`);
+        const lessons = await res.json();
+        const select = document.getElementById("lessonSelect");
+
+        select.innerHTML = "";
+        lessons.forEach(lesson => {
+          const option = document.createElement("option");
+          option.value = lesson.id;
+          option.textContent = lesson.title || lesson.id;
+          select.appendChild(option);
+        });
+      } catch (err) {
+        console.error("Failed to load lessons:", err);
+      }
+    }
+
+
+
+    async function send() {
+      const userInput = document.getElementById("input").value;
+      const lessonId = document.getElementById("lessonSelect").value;
+      document.getElementById("input").value = "";
+
+      if (!lessonId) {
+        alert("Please select a lesson.");
+        return;
+      }
+
+      history.push({ user: userInput });
+
+      const response = await fetch("http://127.0.0.1:8000/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lesson_id: lessonId,
+          user_input: userInput,
+          chat_history: history.map(h => ({
+            user: h.user,
+            assistant: h.assistant || ""
+          }))
+        })
+      });
+
+      const chatDiv = document.getElementById("chat");
+
+      if (!response.ok) {
+        chatDiv.innerHTML += `<b>Bot:</b> <i>Server error</i><br><br>`;
+        return;
+      }
+
+      const data = await response.json();
+      const assistantReply = data.response;
+      history[history.length - 1].assistant = assistantReply;
+
+      chatDiv.innerHTML += `<b>You:</b> ${userInput}<br>`;
+      chatDiv.innerHTML += `<b>Bot:</b> ${assistantReply}<br><br>`;
+      chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+
+    async function score() {
+      const lessonId = document.getElementById("lessonSelect").value;
+      const chatDiv = document.getElementById("chat");
+
+      if (!lessonId || history.length === 0) {
+        alert("Please select a lesson and have a conversation first.");
+        return;
+      }
+
+      const response = await fetch("http://127.0.0.1:8000/score", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lesson_id: lessonId,
+          chat_history: history
+        })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        chatDiv.innerHTML += `<b>Scoring failed:</b> <i>${errorText}</i><br><br>`;
+        return;
+      }
+
+      const data = await response.json();
+      const scores = data.scores || {};
+      const rubric = data.rubric || [];
+
+      chatDiv.innerHTML += `<hr><b>Final Scores:</b><br>`;
+
+      rubric.forEach(item => {
+        const crit = item.criterion;
+        const max = item.max_score;
+        const entry = scores[crit] || {};
+        const score = entry.score !== undefined ? entry.score : "N/A";
+        const feedback = entry.feedback || "No feedback.";
+
+        const divId = `fb-${crit.replace(/\s+/g, '')}`;
+
+        chatDiv.innerHTML += `
+          <div>
+            <span class="clickable" onclick="toggleFeedback('${divId}')">
+              ${crit}: ${score} / ${max}
+            </span>
+            <div id="${divId}" class="feedback">${feedback}</div>
+          </div>
+        `;
+      });
+
+      if (scores.suggestions) {
+        chatDiv.innerHTML += `<br><b>Suggestions for improvement:</b><ul>`;
+        scores.suggestions.forEach(s => chatDiv.innerHTML += `<li>${s}</li>`);
+        chatDiv.innerHTML += `</ul>`;
+      }
+
+      if (scores.strength) {
+        chatDiv.innerHTML += `<b>What you did well:</b> ${scores.strength}<br>`;
+      }
+
+      chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+
+    function toggleFeedback(id) {
+      const div = document.getElementById(id);
+      if (div) {
+        div.style.display = div.style.display === "none" ? "block" : "none";
+      }
+    }
+
+    window.onload = loadCategories;
+  </script>
+</body>
+</html>
