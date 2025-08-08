@@ -27,6 +27,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/categories")
+def get_categories():
+    response = supabase.table("categories").select("id", "name").execute()
+    return response.data
+
+@app.get("/lessons/by_category/{category_id}")
+def get_lessons_by_category(category_id: str):
+    response = supabase.table("lessons").select("id", "title").eq("category_id", category_id).execute()
+    return response.data
+
 @app.get("/lessons")
 def get_lessons():
     try:
